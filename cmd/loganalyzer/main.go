@@ -7,16 +7,39 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode"
 )
 
 var levelOrder = []string{"ERROR", "WARN", "INFO", "DEBUG", "UNKNOWN"}
 
+type Stats struct {
+	Total  int            // 总行数
+	Empty  int            // 空行数（strings.TrimSpace 后为空）
+	Levels map[string]int // 各级别行数
+}
+
 // classifyLevel 按前 3 个字段判定日志级别，优先级 ERROR > WARN > INFO > DEBUG。
+// 以连续空白为分隔逐字段扫描，取到 3 个字段后立即停止，避免像 strings.Fields
+// 那样为整行分配完整字段切片（超长多字段行会导致内存退化）。
 func classifyLevel(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) > 3 {
-		fields = fields[:3]
+	// 收集前 3 个字段（最多）。
+	fields := make([]string, 0, 3)
+	i := 0
+	for len(fields) < 3 && i < len(line) {
+		// 跳过分隔空白。
+		for i < len(line) && unicode.IsSpace(rune(line[i])) {
+			i++
+		}
+		if i >= len(line) {
+			break
+		}
+		start := i
+		for i < len(line) && !unicode.IsSpace(rune(line[i])) {
+			i++
+		}
+		fields = append(fields, line[start:i])
 	}
+	// 按级别优先级匹配，外层遍历级别、内层遍历字段。
 	for _, lv := range levelOrder[:4] {
 		for _, f := range fields {
 			if strings.ToUpper(f) == lv {
@@ -58,12 +81,6 @@ func analyze(path string) (Stats, error) {
 	return stats, nil
 }
 
-type Stats struct {
-	Total  int            // 总行数
-	Empty  int            // 空行数（strings.TrimSpace 后为空）
-	Levels map[string]int // 各级别行数
-}
-
 func main() {
 	file := flag.String("file", "", "日志文件路径（必填）")
 	flag.Parse()
@@ -83,7 +100,13 @@ func main() {
 	fmt.Printf("Empty lines: %d\n", stats.Empty)
 	fmt.Println()
 	fmt.Println("Level statistics:")
+	width := 0
 	for _, lv := range levelOrder {
-		fmt.Printf("  %-7s %d\n", lv+":", stats.Levels[lv])
+		if n := len(lv) + 1; n > width {
+			width = n
+		}
+	}
+	for _, lv := range levelOrder {
+		fmt.Printf("  %-*s %d\n", width, lv+":", stats.Levels[lv])
 	}
 }
