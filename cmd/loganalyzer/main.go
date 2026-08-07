@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 var levelOrder = []string{"ERROR", "WARN", "INFO", "DEBUG", "UNKNOWN"}
@@ -21,21 +22,32 @@ type Stats struct {
 // classifyLevel 按前 3 个字段判定日志级别，优先级 ERROR > WARN > INFO > DEBUG。
 // 以连续空白为分隔逐字段扫描，取到 3 个字段后立即停止，避免像 strings.Fields
 // 那样为整行分配完整字段切片（超长多字段行会导致内存退化）。
+// 空白判定通过 utf8.DecodeRuneInString 正确解码后交给 unicode.IsSpace，
+// 与 strings.Fields 语义完全等价——不能按字节强转 rune(line[i])，
+// 否则多字节 UTF-8 的续字节（0x80~0xBF，含 NEL=0x85、NBSP=0xA0）会被误判为空白。
 func classifyLevel(line string) string {
 	// 收集前 3 个字段（最多）。
 	fields := make([]string, 0, 3)
 	i := 0
 	for len(fields) < 3 && i < len(line) {
-		// 跳过分隔空白。
-		for i < len(line) && unicode.IsSpace(rune(line[i])) {
-			i++
+		// 跳过分隔空白（正确解码 rune 后判定）。
+		for i < len(line) {
+			r, size := utf8.DecodeRuneInString(line[i:])
+			if !unicode.IsSpace(r) {
+				break
+			}
+			i += size
 		}
 		if i >= len(line) {
 			break
 		}
 		start := i
-		for i < len(line) && !unicode.IsSpace(rune(line[i])) {
-			i++
+		for i < len(line) {
+			r, size := utf8.DecodeRuneInString(line[i:])
+			if unicode.IsSpace(r) {
+				break
+			}
+			i += size
 		}
 		fields = append(fields, line[start:i])
 	}
