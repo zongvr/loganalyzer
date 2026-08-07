@@ -1,0 +1,14 @@
+# 编译产物
+/loganalyzer
+cmd/loganalyzer/loganalyzer
+*.exe
+*.test
+*.out
+
+# 本地构建/分发目录
+/dist/
+
+# 编辑器/OS
+.idea/
+.vscode/
+.DS_Store

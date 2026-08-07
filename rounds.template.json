@@ -1,0 +1,18 @@
+[
+  {
+    "round_id": 1,
+    "prompt_content": "使用 Go 初始化日志分析 CLI：接收命令行参数传入日志文件路径，用 bufio 逐行读取文件并打印总行数。",
+    "commit_hash": "此处填第1轮 git commit 的哈希",
+    "modify_time": "2026-08-08 10:20:00",
+    "agent_type": "Kilo Code",
+    "dev_language": "Go"
+  },
+  {
+    "round_id": 2,
+    "prompt_content": "解析每一行日志的级别（INFO/WARN/ERROR），统计各级别出现次数并输出。",
+    "commit_hash": "此处填第2轮 git commit 的哈希",
+    "modify_time": "2026-08-08 11:05:00",
+    "agent_type": "Kilo Code",
+    "dev_language": "Go"
+  }
+]
