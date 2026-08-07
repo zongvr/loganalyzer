@@ -24,7 +24,7 @@
 | 2 | **修复超长行崩溃**：`bufio.Scanner` 64KB 上限导致 `token too long` | 改用 `bufio.Reader` 逐行读取 | ✅ 完成 | `267b759` |
 | 3 | 重构 `analyze`/`Stats`，单次遍历完成分级统计（ERROR/WARN/INFO/DEBUG/UNKNOWN） | 级别统计 | ✅ 完成 | `04d58ee` |
 | 4 | **修正输出列对齐 + 消除 `classifyLevel` 内存退化** | 缺陷修复 | ✅ 完成 | `64e82a6` |
-| 5 | **修复 round 4 引入的 UTF-8 分词回归**（中文日志级别误判） | 回归修复 | 🔄 进行中 | — |
+| 5 | **修复 round 4 引入的 UTF-8 分词回归**（中文日志级别误判） | 回归修复 | ✅ 完成 | `08ca8f5` |
 | 6 | 支持 `--contains` 关键字过滤 | 关键字过滤 | 待开始 | — |
 | 7 | 支持 `--level` 级别过滤与时间区间过滤 | 条件过滤 | 待开始 | — |
 | 8 | 支持 `--format text/json` 两种输出 | 输出格式化 | 待开始 | — |
@@ -283,6 +283,16 @@
 - **复盘**：问题 1 是「AI 写的代码要审」，问题 2 是「AI 说它审过了，这句话也要审」，
   问题 4 则是第三层——**「AI 修好了一个缺陷」这件事本身，也可能带来新的缺陷**。
   三者共同指向同一条纪律：每一轮的验收都必须**以上一轮的既有行为为基线**，而不是只验证本轮新目标。
+
+- **修复结果（round 5，commit `08ca8f5`，已复测）**：采用**方案 B**——
+  `classifyLevel` 用 `utf8.DecodeRuneInString` 逐 rune 正确解码后交 `unicode.IsSpace` 判定空白，
+  与 `strings.Fields` 语义完全等价，同时保留「扫描到第 3 字段即停止、不为整行分配字段切片」的内存优化。
+  **本人独立差分复跑**（不采信 AI 自述）：当前版与 round 3 基线（`04d58ee`）在
+  `utf8_edge.log` / `sample.log` / `test.log` / 空文件 / 10 万字符长行 / 末行无换行等语料上
+  **级别统计数值逐项一致**；`utf8_edge.log` 输出 `ERROR 4 / WARN 1 / INFO 2 / DEBUG 1 / UNKNOWN 0`
+  （与 round 3 基线一致，而 round 4 基线在此为 `ERROR 2 / UNKNOWN 3`），**UTF-8 回归已修复**。
+  注：输出对齐沿用 round 4 的动态列宽（round 3 为固定 7 宽且 UNKNOWN 列曾错位，属已修复缺陷，不回退），
+  故逐字节 diff 仅在填充空格上有差异，级别计数零差异。
 
 ---
 

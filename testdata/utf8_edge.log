@@ -1,6 +1,6 @@
-2026-08-07 堀 ERROR 模块名含字节0xA0(位于中间) 应判ERROR
-2026-08-07 习 WARN 模块名含字节0xA0(位于末尾) 应判WARN
-2026-08-07 丅 INFO 模块名含字节0x85即NEL(位于末尾) 应判INFO
+2026-08-07 堀 ERROR 模块名含字节码0xA0(位于中间) 应判ERROR
+2026-08-07 习 WARN 模块名含字节码0xA0(位于末尾) 应判WARN
+2026-08-07 丅 INFO 模块名含字节码0x85即NEL(位于末尾) 应判INFO
 2026-08-07 塀 DEBUG 另一个含0xA0的汉字 应判DEBUG
 2026-08-07 正常 ERROR 纯汉字无特殊字节 对照组 应判ERROR
 2026-08-07 module ERROR 纯ASCII 对照组 应判ERROR
