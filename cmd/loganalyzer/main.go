@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -27,6 +28,9 @@ func main() {
 	fmt.Printf("Empty lines: %d\n", empty)
 }
 
+// 不能用默认 bufio.Scanner：其单行上限为 bufio.MaxScanTokenSize（64KB），
+// 日志中的长 JSON 或异常堆栈会触发 "token too long" 错误。
+// 改用 bufio.Reader 逐行读取，天然无长度上限且保持流式（内存不随文件总大小增长）。
 func countLines(path string) (total, empty int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -34,15 +38,21 @@ func countLines(path string) (total, empty int, err error) {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		total++
-		if strings.TrimSpace(scanner.Text()) == "" {
-			empty++
+	reader := bufio.NewReader(f)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if line != "" {
+			total++
+			if strings.TrimSpace(line) == "" {
+				empty++
+			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return 0, 0, err
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			return 0, 0, readErr
+		}
 	}
 	return total, empty, nil
 }
