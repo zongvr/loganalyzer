@@ -1,8 +1,48 @@
 package main
 
-// 本文件为工程起点占位，不含任何功能逻辑。
-// 从第 1 轮起，由候选人使用 Kilo Code 编程智能体逐步补全日志分析 CLI 的全部功能。
-// 每轮交互后提交一次 git，并提交对应的 JSONL 记录（见仓库根 README 与 tools/gen_jsonl.py）。
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+)
+
 func main() {
-	// TODO: 使用 Kilo Code 实现日志分析 CLI（见 README「开发轮次规划」）
+	file := flag.String("file", "", "日志文件路径（必填）")
+	flag.Parse()
+
+	if *file == "" {
+		fmt.Fprintln(os.Stderr, "错误：缺少必填参数 --file <path>，请指定日志文件路径。")
+		os.Exit(1)
+	}
+
+	total, empty, err := countLines(*file)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "错误：读取文件失败：%v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Total lines: %d\n", total)
+	fmt.Printf("Empty lines: %d\n", empty)
+}
+
+func countLines(path string) (total, empty int, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		total++
+		if strings.TrimSpace(scanner.Text()) == "" {
+			empty++
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, 0, err
+	}
+	return total, empty, nil
 }
