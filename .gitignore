@@ -12,3 +12,6 @@ cmd/loganalyzer/loganalyzer
 .idea/
 .vscode/
 .DS_Store
+
+# 无关工具产生的日志
+firebase-debug.log

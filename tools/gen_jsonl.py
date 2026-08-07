@@ -5,10 +5,12 @@
 
 作用：
     读取你每轮填写的 rounds.json（指令 + commit 哈希 + 时间等），
-    自动从 git 仓库抓取该 commit 的真实 diff，补全 modify_diff 字段，
-    按考核规范输出标准 JSONL 文件（UTF-8、每行一条 JSON、无空行、无注释）。
+    自动从 git 仓库抓取该 commit 的真实 diff 与提交时间，补全
+    modify_diff / modify_time 字段，按考核规范输出标准 JSONL 文件
+    （UTF-8、每行一条 JSON、无空行、无注释）。
 
-    这样可避免手工复制 diff 出错/遗漏，且 diff 全部取自真实 git 历史，无法篡改。
+    这样可避免手工复制 diff / 时间出错或遗漏，且 diff 与时间全部取自
+    真实 git 历史，无法篡改——比手工填 REPLACE_ME 再批量替换更稳。
 
 用法：
     python3 tools/gen_jsonl.py \
@@ -21,11 +23,12 @@ rounds.json 格式（数组，每个对象 = 一轮交互）：
   {
     "round_id": 1,
     "prompt_content": "你实际发给 Kilo Code 的完整自然语言指令",
-    "commit_hash": "a1b2c3d4e5f6",        // 该轮对应的 git commit 短/长哈希
-    "modify_time": "2026-08-08 10:20:00",  // 该轮交互时间 YYYY-MM-DD HH:MM:SS
-    "agent_type": "Kilo Code",
-    "dev_language": "Go"
-    // modify_diff 可省略，脚本会从 git 自动抓取；若手动填了则以手动为准
+    "commit_hash": "a1b2c3d4e5f6",   // 该轮 git commit 的短/长哈希（必填）
+    "agent_type": "Kilo Code",         // 必填
+    "dev_language": "Go",              // 必填
+    // modify_diff、modify_time 可省略：脚本从 git 自动抓取；
+    // 若手动填了则以手动为准（用于修正时区等特殊情况）。
+    "modify_time": "2026-08-08 10:20:00"
   }
 ]
 
@@ -54,6 +57,15 @@ def get_diff(repo: str, commit: str) -> str:
     ).decode("utf-8")
 
 
+def get_commit_time(repo: str, commit: str) -> str:
+    """取该 commit 的提交时间，格式 YYYY-MM-DD HH:MM:SS（本地时区）。"""
+    return subprocess.check_output(
+        ["git", "-C", repo, "show", "-s", "--format=%cd",
+         "--date=format:%Y-%m-%d %H:%M:%S", commit],
+        stderr=subprocess.DEVNULL,
+    ).decode("utf-8").strip()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="生成华傲数据考核标准 JSONL 过程记录")
     ap.add_argument("--repo", default=".", help="git 仓库路径，默认当前目录")
@@ -64,7 +76,7 @@ def main() -> None:
     with open(args.rounds, "r", encoding="utf-8") as f:
         rounds = json.load(f)
 
-    required = ["round_id", "prompt_content", "commit_hash", "modify_time", "agent_type", "dev_language"]
+    required = ["round_id", "prompt_content", "commit_hash", "agent_type", "dev_language"]
     seen = set()
     lines = []
     for r in rounds:
@@ -76,12 +88,13 @@ def main() -> None:
         seen.add(r["round_id"])
 
         diff = r.get("modify_diff") or get_diff(args.repo, r["commit_hash"])
+        ctime = r.get("modify_time") or get_commit_time(args.repo, r["commit_hash"])
         rec = {
             "round_id": r["round_id"],
             "prompt_content": r["prompt_content"],
             "modify_diff": diff,
             "commit_hash": r["commit_hash"],
-            "modify_time": r["modify_time"],
+            "modify_time": ctime,
             "agent_type": r["agent_type"],
             "dev_language": r["dev_language"],
         }
