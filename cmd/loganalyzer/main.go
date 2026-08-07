@@ -65,7 +65,7 @@ func classifyLevel(line string) string {
 // 不能用默认 bufio.Scanner：其单行上限为 bufio.MaxScanTokenSize（64KB），
 // 日志中的长 JSON 或异常堆栈会触发 "token too long" 错误。
 // 改用 bufio.Reader 逐行读取，天然无长度上限且保持流式（内存不随文件总大小增长）。
-func analyze(path string) (Stats, error) {
+func analyze(path string, contains string) (Stats, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Stats{}, err
@@ -77,11 +77,17 @@ func analyze(path string) (Stats, error) {
 	for {
 		line, readErr := reader.ReadString('\n')
 		if line != "" {
-			stats.Total++
-			if strings.TrimSpace(line) == "" {
-				stats.Empty++
+			// 过滤判断须与 readErr 检查分离（用 if/else 而非 continue），
+			// 确保末尾无换行的最后一行不会被漏统计。
+			if contains != "" && !strings.Contains(line, contains) {
+				// 不匹配：跳过本行统计。
+			} else {
+				stats.Total++
+				if strings.TrimSpace(line) == "" {
+					stats.Empty++
+				}
+				stats.Levels[classifyLevel(line)]++
 			}
-			stats.Levels[classifyLevel(line)]++
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
@@ -95,6 +101,7 @@ func analyze(path string) (Stats, error) {
 
 func main() {
 	file := flag.String("file", "", "日志文件路径（必填）")
+	contains := flag.String("contains", "", "关键字过滤：仅统计包含该子串的行（可选）")
 	flag.Parse()
 
 	if *file == "" {
@@ -102,12 +109,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	stats, err := analyze(*file)
+	stats, err := analyze(*file, *contains)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "错误：读取文件失败：%v\n", err)
 		os.Exit(1)
 	}
 
+	if *contains != "" {
+		fmt.Printf("Filter: contains=%q\n", *contains)
+	}
 	fmt.Printf("Total lines: %d\n", stats.Total)
 	fmt.Printf("Empty lines: %d\n", stats.Empty)
 	fmt.Println()
