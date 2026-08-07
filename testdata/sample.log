@@ -1,0 +1,17 @@
+2026-08-07 09:00:01 INFO  服务启动成功，监听端口 8080
+2026-08-07 09:00:01 DEBUG 加载配置文件 /etc/app/config.yaml
+2026-08-07 09:00:02 INFO  数据库连接池初始化完成，size=20
+2026-08-07 09:03:17 WARN  数据库连接池使用率达到 85%
+2026-08-07 09:05:42 ERROR 订单 #10023 支付回调超时，retry=1
+    at com.audaque.order.PayCallback.handle(PayCallback.java:88)
+    at com.audaque.order.OrderService.process(OrderService.java:142)
+2026-08-07 09:05:43 error 订单 #10023 第二次重试仍然失败
+2026-08-07 09:07:10 INFO  用户 u_88231 登录成功
+
+2026-08-07 09:11:56 warn  缓存命中率低于阈值 60%，当前 47%
+2026-08-07 09:15:03 ERROR 上游接口 /api/v2/inventory 返回 503
+2026-08-07 09:15:04 INFO  触发熔断，切换至本地兜底库存
+这是一行没有任何级别标记的自由文本
+2026-08-07 09:20:00 DEBUG 定时任务 cleanup 开始执行
+2026-08-07 09:20:11 ERROR 清理临时目录失败：permission denied
+2026-08-07 09:30:00 INFO  健康检查通过
