@@ -286,23 +286,88 @@
 
 ---
 
-## 六、运行 / 构建 / 容器化
+## 六、使用说明（运行 / 构建 / 容器化）
+
+> 本节严格区分**当前已实现**与**规划中**。凡标注「规划中」的能力，在当前提交下**尚未实现**，
+> 请勿照抄执行。README 不描述未落地的功能，是为了让评审拿到仓库即可复现，不踩空。
+
+### 6.1 环境要求
+
+- Go 1.22 及以上（开发环境实测 go1.26.5 darwin/amd64）
+- **零第三方依赖**：全部使用 Go 标准库，`go.mod` 无 require 项，无需联网 `go get`
+
+### 6.2 构建
 
 ```bash
-# 构建
+git clone <仓库地址> && cd loganalyzer
 go build -o loganalyzer ./cmd/loganalyzer
+```
 
-# 基础用法
-./loganalyzer --file app.log
-./loganalyzer --file app.log --level ERROR --contains "timeout" --top 5 --format json
+### 6.3 当前已实现的用法
 
-# 测试
+```bash
+# 唯一参数 --file（必填）：统计总行数、空行数与日志级别分布
+./loganalyzer --file testdata/sample.log
+
+# 查看帮助
+./loganalyzer --help
+```
+
+预期输出（以仓库自带的 17 行样本为例，为 `./loganalyzer --file testdata/sample.log` 的真实输出，逐字符一致）：
+
+```
+Total lines: 17
+Empty lines: 1
+
+Level statistics:
+  ERROR:   4
+  WARN:    2
+  INFO:    5
+  DEBUG:   2
+  UNKNOWN: 4
+```
+
+> 级别标签列宽由程序在输出前按最长标签动态计算（见问题 3 的对齐修复），因此新增级别也不会错位。
+
+**级别判定规则**：取每行前 3 个空白分隔字段，逐字段 `ToUpper` 后精确匹配，
+按 `ERROR > WARN > INFO > DEBUG` 优先级取第一个命中；均未命中记为 `UNKNOWN`。
+恒等式 `ERROR + WARN + INFO + DEBUG + UNKNOWN ≡ Total lines` 始终成立，可用于自校验。
+
+### 6.4 退出码约定
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 正常完成（含空文件，输出全 0） |
+| 1 | 未传 `--file` / 文件不存在 / 无读权限 / 传入的是目录 / 读取过程出错 |
+
+错误信息统一输出到 stderr，均为中文友好提示。
+
+### 6.5 自带测试语料
+
+| 文件 | 用途 |
+|---|---|
+| `test.log` | 空行统计基础用例（6 行 / 3 空行） |
+| `testdata/sample.log` | 级别统计主用例，含小写 `error`、堆栈续行、无级别文本等边界 |
+| `testdata/utf8_edge.log` | 中文 UTF-8 分词边界语料（含字节 `0xA0` / `0x85` 的汉字），用于验证问题 4 的回归 |
+
+### 6.6 规划中（尚未实现）
+
+```bash
+# ⚠️ 以下参数尚未实现，为后续轮次的开发计划，当前执行会报 flag provided but not defined
+./loganalyzer --file app.log --contains "timeout"      # 关键字过滤
+./loganalyzer --file app.log --format json             # JSON 输出
+./loganalyzer --file app.log --top 5                   # Top N 高频错误
+
+# 单元测试（尚未编写）
 go test ./...
 
-# 容器化（轮次 11）
+# 容器化（尚未编写 Dockerfile）
 docker build -t loganalyzer .
 docker run --rm -v "$PWD":/data loganalyzer --file /data/app.log
 ```
+
+> 各项的落地轮次见第二节轮次规划表；实际完成情况以 Git 提交与 JSONL 记录为准。
+> 本节会随轮次推进同步更新，**已实现的能力才会从 6.6 移入 6.3**。
 
 ---
 
