@@ -410,7 +410,9 @@ docker run --rm -v "$PWD":/data loganalyzer --file /data/app.log
 
 ### 7.4 远程仓库
 
-- **GitHub（主仓库，公开）**：<https://github.com/zongvr/loganalyzer> —— Public，无需登录即可查看、克隆、评审提交历史。
-- **Gitee（国内镜像，当前私有）**：<https://gitee.com/yq_game_26046710/loganalyzer> —— 因 Gitee 账号安全策略（发布公开内容前需在「个人设置」完成 2FA 设置或绑定第三方账号），当前为**私有镜像**；在该 Gitee 账号开启 2FA / 绑定 GitHub 后，即可在网页一键或经 API 转为公开。两个远程推送的是同一份提交历史，内容完全一致。
+两个远程仓库均为 **Public**，无需登录即可查看、克隆、评审提交历史：
 
-> 说明：考核要求「Git 仓库必须公开」，当前已由 GitHub 公开仓库满足；Gitee 作为国内可直连的镜像备用，待账号安全等级提升后即可公开。
+- **GitHub（主仓库）**：<https://github.com/zongvr/loganalyzer>
+- **Gitee（国内镜像，已转公开）**：<https://gitee.com/yq_game_26046710/loganalyzer>
+
+两个远程推送的是同一份提交历史，内容完全一致。Gitee 账号最初因安全评级较低无法发布公开内容（需先开启 2FA 或绑定第三方账号），已开启两步验证后成功转为公开。
