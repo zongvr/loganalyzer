@@ -1,0 +1,17 @@
+# 排除非构建必需项，缩小构建上下文并避免泄漏考核件/日志。
+.git
+.gitignore
+*.md
+AI开发考核*
+*.jsonl
+prompts/
+tools/
+internal/
+/loganalyzer
+cmd/loganalyzer/loganalyzer
+*.test
+*.out
+*.exe
+firebase-debug.log
+test.log
+/dist/
