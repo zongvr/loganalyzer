@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -109,18 +111,84 @@ func lineTime(line string) (time.Time, bool) {
 	return parseTime(firstToken(line))
 }
 
+// msgCount 表示一条去时间戳后的消息及其出现次数。
+type msgCount struct {
+	Message string
+	Count   int
+}
+
+// messageKey 去掉行首时间戳前缀，得到用于高频聚合的消息 key。
+// 规则：1) 前两个 token 拼成「日期+时间」可解析则去掉；2) 否则第一个 token
+// 按日期/ISO 时间可解析则去掉；3) 否则整行（去除首尾空白）即 key。
+// 去掉后若为空则退回整行（去除首尾空白），保证非空行必有唯一 key。
+func messageKey(line string) string {
+	type span struct{ start, end int }
+	spans := make([]span, 0, 2)
+	i := 0
+	for len(spans) < 2 && i < len(line) {
+		for i < len(line) {
+			r, size := utf8.DecodeRuneInString(line[i:])
+			if !unicode.IsSpace(r) {
+				break
+			}
+			i += size
+		}
+		if i >= len(line) {
+			break
+		}
+		start := i
+		for i < len(line) {
+			r, size := utf8.DecodeRuneInString(line[i:])
+			if unicode.IsSpace(r) {
+				break
+			}
+			i += size
+		}
+		spans = append(spans, span{start, i})
+	}
+	trimmed := strings.TrimSpace(line)
+	if len(spans) == 0 {
+		return trimmed
+	}
+	// 1) 前两个 token 用空格拼接成「日期+时间」。
+	if len(spans) >= 2 {
+		joined := line[spans[0].start:spans[0].end] + " " + line[spans[1].start:spans[1].end]
+		if _, ok := parseTime(joined); ok {
+			if rest := strings.TrimSpace(line[spans[1].end:]); rest != "" {
+				return rest
+			}
+			return trimmed
+		}
+	}
+	// 2) 第一个 token 为日期或 ISO 时间。
+	if _, ok := parseTime(line[spans[0].start:spans[0].end]); ok {
+		if rest := strings.TrimSpace(line[spans[0].end:]); rest != "" {
+			return rest
+		}
+		return trimmed
+	}
+	// 3) 无可识别时间戳。
+	return trimmed
+}
+
 // 不能用默认 bufio.Scanner：其单行上限为 bufio.MaxScanTokenSize（64KB），
 // 日志中的长 JSON 或异常堆栈会触发 "token too long" 错误。
 // 改用 bufio.Reader 逐行读取，天然无长度上限且保持流式（内存不随文件总大小增长）。
 // from / to 为 nil 表示对应时间过滤未启用；level 为空串表示级别过滤未启用。
-func analyze(path, contains, level string, from, to *time.Time) (Stats, error) {
+// topN >= 1 时聚合高频消息榜单并返回排序截取后的结果；topN <= 0 时不做聚合（返回 nil）。
+func analyze(path, contains, level string, from, to *time.Time, topN int) (Stats, []msgCount, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return Stats{}, err
+		return Stats{}, nil, err
 	}
 	defer f.Close()
 
 	stats := Stats{Levels: make(map[string]int, len(levelOrder))}
+	var msgList []msgCount
+	var msgIndex map[string]int
+	if topN >= 1 {
+		msgIndex = make(map[string]int)
+	}
 	reader := bufio.NewReader(f)
 	for {
 		line, readErr := reader.ReadString('\n')
@@ -147,25 +215,46 @@ func analyze(path, contains, level string, from, to *time.Time) (Stats, error) {
 			}
 			if keep {
 				stats.Total++
-				if strings.TrimSpace(line) == "" {
+				empty := strings.TrimSpace(line) == ""
+				if empty {
 					stats.Empty++
 				}
 				stats.Levels[lv]++
+				// 空行不计入 Top-N 榜单。
+				if topN >= 1 && !empty {
+					key := messageKey(line)
+					if idx, ok := msgIndex[key]; ok {
+						msgList[idx].Count++
+					} else {
+						msgIndex[key] = len(msgList)
+						msgList = append(msgList, msgCount{Message: key, Count: 1})
+					}
+				}
 			}
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
 				break
 			}
-			return Stats{}, readErr
+			return Stats{}, nil, readErr
 		}
 	}
-	return stats, nil
+	if topN >= 1 {
+		// 稳定排序：同频消息保持首次出现序。
+		sort.SliceStable(msgList, func(a, b int) bool {
+			return msgList[a].Count > msgList[b].Count
+		})
+		if len(msgList) > topN {
+			msgList = msgList[:topN]
+		}
+	}
+	return stats, msgList, nil
 }
 
 // output 渲染统计结果。format 仅接受 text / json（main 已校验）。
 // filter 为已拼接好的过滤字符串，未启用过滤时为空串。
-func output(stats Stats, format, filter string) error {
+// topN >= 1 时渲染 Top-N 榜单；topN <= 0 时 text 不打印榜单、json 不出现 top 字段。
+func output(stats Stats, format, filter string, top []msgCount, topN int) error {
 	switch format {
 	case "text":
 		if filter != "" {
@@ -184,6 +273,18 @@ func output(stats Stats, format, filter string) error {
 		for _, lv := range levelOrder {
 			fmt.Printf("  %-*s %d\n", width, lv+":", stats.Levels[lv])
 		}
+		if topN >= 1 {
+			fmt.Printf("Top %d messages:\n", topN)
+			countWidth := 1
+			for _, m := range top {
+				if n := len(strconv.Itoa(m.Count)); n > countWidth {
+					countWidth = n
+				}
+			}
+			for _, m := range top {
+				fmt.Printf("  %*d  %s\n", countWidth, m.Count, m.Message)
+			}
+		}
 		return nil
 	case "json":
 		type levelCount struct {
@@ -194,17 +295,34 @@ func output(stats Stats, format, filter string) error {
 		for _, lv := range levelOrder {
 			levels = append(levels, levelCount{Level: lv, Count: stats.Levels[lv]})
 		}
+		type topMsg struct {
+			Message string `json:"message"`
+			Count   int    `json:"count"`
+		}
+		var topList []topMsg
+		for _, m := range top {
+			topList = append(topList, topMsg{Message: m.Message, Count: m.Count})
+		}
+		if topList == nil {
+			topList = make([]topMsg, 0)
+		}
 		type report struct {
 			Filter     string       `json:"filter"`
 			TotalLines int          `json:"total_lines"`
 			EmptyLines int          `json:"empty_lines"`
 			Levels     []levelCount `json:"levels"`
+			Top        *[]topMsg    `json:"top,omitempty"`
+		}
+		var topPtr *[]topMsg
+		if topN >= 1 {
+			topPtr = &topList
 		}
 		b, err := json.Marshal(report{
 			Filter:     filter,
 			TotalLines: stats.Total,
 			EmptyLines: stats.Empty,
 			Levels:     levels,
+			Top:        topPtr,
 		})
 		if err != nil {
 			return err
@@ -223,6 +341,7 @@ func main() {
 	fromStr := flag.String("from", "", "时间过滤：仅统计时间戳 ≥ 该值的行（可选）")
 	toStr := flag.String("to", "", "时间过滤：仅统计时间戳 ≤ 该值的行（可选）")
 	format := flag.String("format", "text", "输出格式：text 或 json（可选，默认 text）")
+	topN := flag.Int("top", 0, "输出出现频率最高的 N 条消息榜单（N>=1 启用，默认不启用）")
 	flag.Parse()
 
 	if *file == "" {
@@ -254,7 +373,7 @@ func main() {
 		to = &t
 	}
 
-	stats, err := analyze(*file, *contains, *level, from, to)
+	stats, top, err := analyze(*file, *contains, *level, from, to, *topN)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "错误：读取文件失败：%v\n", err)
 		os.Exit(1)
@@ -275,7 +394,7 @@ func main() {
 	}
 	filter := strings.Join(filterParts, " ")
 
-	if err := output(stats, formatMode, filter); err != nil {
+	if err := output(stats, formatMode, filter, top, *topN); err != nil {
 		fmt.Fprintf(os.Stderr, "错误：输出失败：%v\n", err)
 		os.Exit(1)
 	}
