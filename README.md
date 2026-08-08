@@ -32,7 +32,7 @@
 | 10 | 单元测试覆盖解析与统计 | 测试 | ✅ 完成 | `2010e02` |
 | 11 | 重构：拆分 parser / stats / output 子包（行为零变更，覆盖率 parser 95.9% / stats 93.9% / output 92.9%） | 结构优化 | ✅ 完成 | `736aa5e` |
 | 12 | 编写 Dockerfile 并构建镜像（多阶段 + scratch + 静态编译 + 测试门，镜像 2.42MB，行为零回归） | 容器化 | ✅ 完成 | `4f96850` |
-| 13 | 新增 tools/selfcheck.sh 一键自测脚本（示例与最终自测） | 交付收尾 | 🔄 进行中 | — |
+| 13 | 新增 tools/selfcheck.sh 一键自测脚本（18/18 通过）；大修 README 使用说明对齐 round 12 真实状态 | 交付收尾 | ✅ 完成 | 5917bde |
 
 > **关于轮次与初始规划的偏差（如实说明）**：本项目共发生三次计划调整，均为代码审核暴露问题所致：
 >
@@ -315,15 +315,32 @@ go build -o loganalyzer ./cmd/loganalyzer
 
 ### 6.3 当前已实现的用法
 
+全部参数中唯一必填的是 `--file`；其余均为可选过滤 / 格式化开关。以下示例均以仓库自带语料 `testdata/sample.log`（17 行）为输入，输出为真实运行结果，逐字符可复现：
+
 ```bash
-# 唯一参数 --file（必填）：统计总行数、空行数与日志级别分布
+# 基础：统计总行数、空行数与日志级别分布
 ./loganalyzer --file testdata/sample.log
 
 # 查看帮助
 ./loganalyzer --help
+
+# 关键字过滤（行内是否包含子串，大小写敏感）
+./loganalyzer --file testdata/sample.log --contains ERROR
+
+# 级别过滤（大小写不敏感，如 --level error 等价）
+./loganalyzer --file testdata/sample.log --level ERROR
+
+# 时间区间过滤（端点包含，支持 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS）
+./loganalyzer --file <带日期日志> --from 2026-08-10 --to 2026-08-20
+
+# JSON 输出（便于被其他程序消费）
+./loganalyzer --file testdata/sample.log --format json
+
+# Top N 高频日志模式（剥离行首时间戳后聚类；--top 0 或不传则不输出榜单）
+./loganalyzer --file testdata/sample.log --top 2
 ```
 
-预期输出（以仓库自带的 17 行样本为例，为 `./loganalyzer --file testdata/sample.log` 的真实输出，逐字符一致）：
+**基础输出**（`--file testdata/sample.log`）：
 
 ```
 Total lines: 17
@@ -337,11 +354,56 @@ Level statistics:
   UNKNOWN: 4
 ```
 
+**关键字过滤**（`--contains ERROR`）：`sample.log` 中仅有 3 行含大写 `ERROR` 子串，故 `Total lines: 3` 且全部计入 `ERROR`。
+
+```
+Filter: contains="ERROR"
+Total lines: 3
+Empty lines: 0
+
+Level statistics:
+  ERROR:   3
+  WARN:    0
+  INFO:    0
+  DEBUG:   0
+  UNKNOWN: 0
+```
+
+**级别过滤**（`--level ERROR`）：仅统计被判定为 `ERROR` 的行（共 4 行）。
+
+```
+Filter: level="ERROR"
+Total lines: 4
+Empty lines: 0
+
+Level statistics:
+  ERROR:   4
+  WARN:    0
+  INFO:    0
+  DEBUG:   0
+  UNKNOWN: 0
+```
+
+**JSON 输出**（`--format json`）：字段顺序与层级固定——`filter` / `total_lines` / `empty_lines` / `levels[]`；`levels` 按 `levelOrder` 固定顺序（ERROR→WARN→INFO→DEBUG→UNKNOWN），`top` 字段仅在 `--top >= 1` 时出现。
+
+```json
+{"filter":"","total_lines":17,"empty_lines":1,"levels":[{"level":"ERROR","count":4},{"level":"WARN","count":2},{"level":"INFO","count":5},{"level":"DEBUG","count":2},{"level":"UNKNOWN","count":4}]}
+```
+
+**Top N**（`--top 2`）：剥离行首时间戳后按频率降序、同频保持首次出现序；本例两条各出现 1 次。
+
+```
+Top 2 messages:
+  1  INFO  服务启动成功，监听端口 8080
+  1  DEBUG 加载配置文件 /etc/app/config.yaml
+```
+
 > 级别标签列宽由程序在输出前按最长标签动态计算（见问题 3 的对齐修复），因此新增级别也不会错位。
 
-**级别判定规则**：取每行前 3 个空白分隔字段，逐字段 `ToUpper` 后精确匹配，
-按 `ERROR > WARN > INFO > DEBUG` 优先级取第一个命中；均未命中记为 `UNKNOWN`。
+**级别判定规则**：取每行前 3 个空白分隔字段（rune 感知，兼容中文 UTF-8 分词），逐字段 `ToUpper` 后精确匹配，按 `ERROR > WARN > INFO > DEBUG` 优先级取第一个命中；均未命中记为 `UNKNOWN`。
 恒等式 `ERROR + WARN + INFO + DEBUG + UNKNOWN ≡ Total lines` 始终成立，可用于自校验。
+
+**时间过滤说明**：区间端点**包含**；无时间戳的行在时间过滤生效时正确排除；日期格式支持 `YYYY-MM-DD` 与 `YYYY-MM-DD HH:MM:SS` 等常见布局（详见 `parser` 包的 `TimeLayouts`）。
 
 ### 6.4 退出码约定
 
@@ -360,24 +422,28 @@ Level statistics:
 | `testdata/sample.log` | 级别统计主用例，含小写 `error`、堆栈续行、无级别文本等边界 |
 | `testdata/utf8_edge.log` | 中文 UTF-8 分词边界语料（含字节 `0xA0` / `0x85` 的汉字），用于验证问题 4 的回归 |
 
-### 6.6 规划中（尚未实现）
+### 6.6 一键自测（tools/selfcheck.sh）
+
+仓库附带可复现的最终自测脚本，一键构建二进制并断言全部主要 flag 组合下的行为正确（`round 13` 新增）：
 
 ```bash
-# ⚠️ 以下参数尚未实现，为后续轮次的开发计划，当前执行会报 flag provided but not defined
-./loganalyzer --file app.log --contains "timeout"      # 关键字过滤
-./loganalyzer --file app.log --format json             # JSON 输出
-./loganalyzer --file app.log --top 5                   # Top N 高频错误
-
-# 单元测试（尚未编写）
-go test ./...
-
-# 容器化（尚未编写 Dockerfile）
-docker build -t loganalyzer .
-docker run --rm -v "$PWD":/data loganalyzer --file /data/app.log
+bash tools/selfcheck.sh
 ```
 
-> 各项的落地轮次见第二节轮次规划表；实际完成情况以 Git 提交与 JSONL 记录为准。
-> 本节会随轮次推进同步更新，**已实现的能力才会从 6.6 移入 6.3**。
+脚本用**不变量 / 关键字段断言**（不硬编码完整输出，抗格式微动），覆盖：基础统计（五档计数之和 ≡ Total lines）、`--contains`、`--level`、时间区间、`--format json` 合法性、`--top`、非法参数与缺失文件的退出码。全部通过时输出：
+
+```
+ALL CHECKS PASSED (18/18)
+```
+
+> 设计呼应本项目方法论（见第五节问题 2）：**可复现的程序断言优于自然语言承诺**。本脚本即「最终自测」的可复现证据，替代口头「已验证」。
+
+### 6.7 单元测试与容器化（均已实现）
+
+- **单元测试**：`go test ./...` 全绿，21 个用例分布于 `parser` / `stats` / `output` 三子包（覆盖率 parser 95.9% / stats 93.9% / output 92.9%），详见 `round 10` / `round 11`。
+- **容器化**：`docker build -t loganalyzer .` 多阶段构建（build 阶段 `golang:1.22-alpine` 含 `go test ./...` 质量门 + 静态编译，runtime 阶段 `scratch`，镜像约 2.42MB）；运行：`docker run --rm -v "$PWD":/data loganalyzer --file /data/<log> [其他 flag]`，详见 `round 12`。
+
+> 历史上本节曾以「规划中（尚未实现）」列出上述能力，但随 `round 6`–`round 12` 全部落地，现已移至此处说明；实际完成情况一律以 Git 提交与 JSONL 记录为准。
 
 ---
 
