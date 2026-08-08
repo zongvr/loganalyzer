@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -62,10 +63,56 @@ func classifyLevel(line string) string {
 	return "UNKNOWN"
 }
 
+// firstToken 提取行首第一个空白分隔的 token（rune 感知扫描，口径与 classifyLevel 一致）。
+func firstToken(line string) string {
+	i := 0
+	for i < len(line) {
+		r, size := utf8.DecodeRuneInString(line[i:])
+		if !unicode.IsSpace(r) {
+			break
+		}
+		i += size
+	}
+	start := i
+	for i < len(line) {
+		r, size := utf8.DecodeRuneInString(line[i:])
+		if unicode.IsSpace(r) {
+			break
+		}
+		i += size
+	}
+	return line[start:i]
+}
+
+// timeLayouts 为兼容的日志时间戳布局，按序尝试，命中第一个即可。
+var timeLayouts = []string{
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05",
+	"2006-01-02",
+	"2006/01/02 15:04:05",
+	"2006/01/02",
+}
+
+// parseTime 用多布局解析时间字符串，返回是否成功。
+func parseTime(s string) (time.Time, bool) {
+	for _, l := range timeLayouts {
+		if t, err := time.ParseInLocation(l, s, time.Local); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// lineTime 提取行首 token 并解析为时间；无法解析时返回 ok=false。
+func lineTime(line string) (time.Time, bool) {
+	return parseTime(firstToken(line))
+}
+
 // 不能用默认 bufio.Scanner：其单行上限为 bufio.MaxScanTokenSize（64KB），
 // 日志中的长 JSON 或异常堆栈会触发 "token too long" 错误。
 // 改用 bufio.Reader 逐行读取，天然无长度上限且保持流式（内存不随文件总大小增长）。
-func analyze(path string, contains string) (Stats, error) {
+// from / to 为 nil 表示对应时间过滤未启用；level 为空串表示级别过滤未启用。
+func analyze(path, contains, level string, from, to *time.Time) (Stats, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Stats{}, err
@@ -77,16 +124,32 @@ func analyze(path string, contains string) (Stats, error) {
 	for {
 		line, readErr := reader.ReadString('\n')
 		if line != "" {
-			// 过滤判断须与 readErr 检查分离（用 if/else 而非 continue），
-			// 确保末尾无换行的最后一行不会被漏统计。
+			// 用统一的 keep 标志叠加各过滤条件（AND），而非散落的 continue，
+			// 确保循环末尾的 readErr / EOF 检查照常执行（末行无换行不漏统计）。
+			lv := classifyLevel(line)
+			keep := true
 			if contains != "" && !strings.Contains(line, contains) {
-				// 不匹配：跳过本行统计。
-			} else {
+				keep = false
+			}
+			if keep && level != "" && !strings.EqualFold(lv, level) {
+				keep = false
+			}
+			if keep && (from != nil || to != nil) {
+				ts, ok := lineTime(line)
+				if !ok {
+					keep = false
+				} else if from != nil && ts.Before(*from) {
+					keep = false
+				} else if to != nil && ts.After(*to) {
+					keep = false
+				}
+			}
+			if keep {
 				stats.Total++
 				if strings.TrimSpace(line) == "" {
 					stats.Empty++
 				}
-				stats.Levels[classifyLevel(line)]++
+				stats.Levels[lv]++
 			}
 		}
 		if readErr != nil {
@@ -102,6 +165,9 @@ func analyze(path string, contains string) (Stats, error) {
 func main() {
 	file := flag.String("file", "", "日志文件路径（必填）")
 	contains := flag.String("contains", "", "关键字过滤：仅统计包含该子串的行（可选）")
+	level := flag.String("level", "", "级别过滤：仅统计该级别的行，大小写不敏感（可选）")
+	fromStr := flag.String("from", "", "时间过滤：仅统计时间戳 ≥ 该值的行（可选）")
+	toStr := flag.String("to", "", "时间过滤：仅统计时间戳 ≤ 该值的行（可选）")
 	flag.Parse()
 
 	if *file == "" {
@@ -109,14 +175,45 @@ func main() {
 		os.Exit(1)
 	}
 
-	stats, err := analyze(*file, *contains)
+	var from, to *time.Time
+	if *fromStr != "" {
+		t, ok := parseTime(*fromStr)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "错误：无法解析 --from 时间值：%s\n", *fromStr)
+			os.Exit(1)
+		}
+		from = &t
+	}
+	if *toStr != "" {
+		t, ok := parseTime(*toStr)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "错误：无法解析 --to 时间值：%s\n", *toStr)
+			os.Exit(1)
+		}
+		to = &t
+	}
+
+	stats, err := analyze(*file, *contains, *level, from, to)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "错误：读取文件失败：%v\n", err)
 		os.Exit(1)
 	}
 
+	var filterParts []string
 	if *contains != "" {
-		fmt.Printf("Filter: contains=%q\n", *contains)
+		filterParts = append(filterParts, fmt.Sprintf("contains=%q", *contains))
+	}
+	if *level != "" {
+		filterParts = append(filterParts, fmt.Sprintf("level=%q", *level))
+	}
+	if *fromStr != "" {
+		filterParts = append(filterParts, fmt.Sprintf("from=%q", *fromStr))
+	}
+	if *toStr != "" {
+		filterParts = append(filterParts, fmt.Sprintf("to=%q", *toStr))
+	}
+	if len(filterParts) > 0 {
+		fmt.Printf("Filter: %s\n", strings.Join(filterParts, " "))
 	}
 	fmt.Printf("Total lines: %d\n", stats.Total)
 	fmt.Printf("Empty lines: %d\n", stats.Empty)
