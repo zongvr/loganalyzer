@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -162,16 +163,76 @@ func analyze(path, contains, level string, from, to *time.Time) (Stats, error) {
 	return stats, nil
 }
 
+// output 渲染统计结果。format 仅接受 text / json（main 已校验）。
+// filter 为已拼接好的过滤字符串，未启用过滤时为空串。
+func output(stats Stats, format, filter string) error {
+	switch format {
+	case "text":
+		if filter != "" {
+			fmt.Printf("Filter: %s\n", filter)
+		}
+		fmt.Printf("Total lines: %d\n", stats.Total)
+		fmt.Printf("Empty lines: %d\n", stats.Empty)
+		fmt.Println()
+		fmt.Println("Level statistics:")
+		width := 0
+		for _, lv := range levelOrder {
+			if n := len(lv) + 1; n > width {
+				width = n
+			}
+		}
+		for _, lv := range levelOrder {
+			fmt.Printf("  %-*s %d\n", width, lv+":", stats.Levels[lv])
+		}
+		return nil
+	case "json":
+		type levelCount struct {
+			Level string `json:"level"`
+			Count int    `json:"count"`
+		}
+		levels := make([]levelCount, 0, len(levelOrder))
+		for _, lv := range levelOrder {
+			levels = append(levels, levelCount{Level: lv, Count: stats.Levels[lv]})
+		}
+		type report struct {
+			Filter     string       `json:"filter"`
+			TotalLines int          `json:"total_lines"`
+			EmptyLines int          `json:"empty_lines"`
+			Levels     []levelCount `json:"levels"`
+		}
+		b, err := json.Marshal(report{
+			Filter:     filter,
+			TotalLines: stats.Total,
+			EmptyLines: stats.Empty,
+			Levels:     levels,
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(b))
+		return nil
+	default:
+		return fmt.Errorf("不支持的输出格式：%s", format)
+	}
+}
+
 func main() {
 	file := flag.String("file", "", "日志文件路径（必填）")
 	contains := flag.String("contains", "", "关键字过滤：仅统计包含该子串的行（可选）")
 	level := flag.String("level", "", "级别过滤：仅统计该级别的行，大小写不敏感（可选）")
 	fromStr := flag.String("from", "", "时间过滤：仅统计时间戳 ≥ 该值的行（可选）")
 	toStr := flag.String("to", "", "时间过滤：仅统计时间戳 ≤ 该值的行（可选）")
+	format := flag.String("format", "text", "输出格式：text 或 json（可选，默认 text）")
 	flag.Parse()
 
 	if *file == "" {
 		fmt.Fprintln(os.Stderr, "错误：缺少必填参数 --file <path>，请指定日志文件路径。")
+		os.Exit(1)
+	}
+
+	formatMode := strings.ToLower(*format)
+	if formatMode != "text" && formatMode != "json" {
+		fmt.Fprintf(os.Stderr, "错误：不支持的 --format 值：%s（仅支持 text / json）\n", *format)
 		os.Exit(1)
 	}
 
@@ -212,20 +273,10 @@ func main() {
 	if *toStr != "" {
 		filterParts = append(filterParts, fmt.Sprintf("to=%q", *toStr))
 	}
-	if len(filterParts) > 0 {
-		fmt.Printf("Filter: %s\n", strings.Join(filterParts, " "))
-	}
-	fmt.Printf("Total lines: %d\n", stats.Total)
-	fmt.Printf("Empty lines: %d\n", stats.Empty)
-	fmt.Println()
-	fmt.Println("Level statistics:")
-	width := 0
-	for _, lv := range levelOrder {
-		if n := len(lv) + 1; n > width {
-			width = n
-		}
-	}
-	for _, lv := range levelOrder {
-		fmt.Printf("  %-*s %d\n", width, lv+":", stats.Levels[lv])
+	filter := strings.Join(filterParts, " ")
+
+	if err := output(stats, formatMode, filter); err != nil {
+		fmt.Fprintf(os.Stderr, "错误：输出失败：%v\n", err)
+		os.Exit(1)
 	}
 }
